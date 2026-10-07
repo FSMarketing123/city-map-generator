@@ -159,11 +159,7 @@
 </div>
 
 <script>
-const OVERPASS = [
-  "https://overpass-api.de/api/interpreter",
-  "https://overpass.kumi.systems/api/interpreter",
-  "https://maps.mail.ru/osm/tools/overpass/api/interpreter",
-];
+const OVERPASS = "https://overpass-api.de/api/interpreter";
 const VIEW_W = 1600;          // SVG units across; stroke widths are relative to this
 const M_PER_MILE = 1609.344;
 
@@ -316,19 +312,21 @@ async function geocode(q) {
 }
 
 async function overpass(query, onWait) {
-  // The main server is the most reliable, so retry it after a pause before trying the mirrors.
-  const attempts = [[OVERPASS[0], 0], [OVERPASS[0], 5], ...OVERPASS.slice(1).map(ep => [ep, 0]), [OVERPASS[0], 15]];
-  for (let i = 0; i < attempts.length; i++) {
-    const [ep, pause] = attempts[i];
-    for (let s = pause; s > 0; s--) { onWait(`Map server is busy. Retrying in ${s}s…`); await new Promise(r => setTimeout(r, 1000)); }
-    if (i > 0) onWait(`Map server is busy. Trying again (${i + 1} of ${attempts.length})…`);
+  // The public server rejects queries as "too busy" when it can't reserve their declared
+  // memory/time, so callers keep those small and we retry with growing pauses.
+  const pauses = [0, 3, 8, 15, 30];
+  for (let i = 0; i < pauses.length; i++) {
+    for (let s = pauses[i]; s > 0; s--) { onWait(`Map server is busy. Retrying in ${s}s… (try ${i + 1} of ${pauses.length})`); await new Promise(r => setTimeout(r, 1000)); }
     try {
-      const r = await fetch(ep, { method: "POST", body: "data=" + encodeURIComponent(query),
-        headers: { "Content-Type": "application/x-www-form-urlencoded" }, signal: AbortSignal.timeout(90000) });
+      const r = await fetch(OVERPASS, { method: "POST", body: "data=" + encodeURIComponent(query),
+        headers: { "Content-Type": "application/x-www-form-urlencoded" }, signal: AbortSignal.timeout(120000) });
       if (r.ok) return await r.json();
-    } catch { /* timeout or network error: fall through to the next attempt */ }
+      const txt = await r.text();
+      if (/out of memory|timed out/i.test(txt))
+        throw Object.assign(new Error("That area has too many streets to download at once. Try a smaller width, or turn off Service / alleys."), { fatal: true });
+    } catch (e) { if (e.fatal) throw e; /* network hiccup: retry */ }
   }
-  throw new Error("The free map servers are busy right now. Wait a minute and click Generate again, or try a smaller width.");
+  throw new Error("The free map server is very busy right now. Wait a minute and click Generate again.");
 }
 
 function enabled() {
@@ -359,7 +357,10 @@ async function generate() {
     if (on.has("path")) fetched.add("path");
     const wantTags = [...fetched].flatMap(k => CLASSES[k].tags);
     const bbox = `${s},${w},${n},${e}`;
-    let qstr = `[out:json][timeout:120];(way["highway"~"^(${wantTags.join("|")})$"](${bbox});`;
+    // Ask for only as much server memory/time as the area needs; small asks get through when it's busy
+    const areaMi2 = widthMi * widthMi / ratio;
+    const mb = areaMi2 <= 40 ? 128 : areaMi2 <= 160 ? 256 : 512;
+    let qstr = `[out:json][timeout:${areaMi2 <= 40 ? 60 : 110}][maxsize:${mb * 1048576}];(way["highway"~"^(${wantTags.join("|")})$"](${bbox});`;
     if (on.has("rail")) { qstr += `way["railway"~"^(rail|light_rail|subway|tram)$"]["tunnel"!="yes"](${bbox});`; fetched.add("rail"); }
     qstr += `);out geom qt;`;
 
