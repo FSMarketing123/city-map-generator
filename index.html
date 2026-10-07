@@ -1,0 +1,457 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>City Map Generator</title>
+<style>
+  :root {
+    --ink: #0f3550;
+    --bg: #f4f5f7;
+    --panel: #ffffff;
+    --line: #dde1e6;
+    --muted: #6b7682;
+    --accent: #0f3550;
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; font: 14px/1.4 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; background: var(--bg); color: #1d2630; }
+  .app { display: grid; grid-template-columns: 320px 1fr; min-height: 100vh; }
+  aside { background: var(--panel); border-right: 1px solid var(--line); padding: 20px; display: flex; flex-direction: column; gap: 16px; overflow-y: auto; max-height: 100vh; position: sticky; top: 0; }
+  h1 { font-size: 18px; margin: 0; letter-spacing: -0.01em; }
+  .sub { color: var(--muted); font-size: 12.5px; margin-top: 2px; }
+  label { display: block; font-size: 12px; font-weight: 600; color: #3a4552; margin-bottom: 5px; }
+  .hint { font-weight: 400; color: var(--muted); }
+  input[type=text], input[type=number], select { width: 100%; padding: 8px 10px; border: 1px solid var(--line); border-radius: 6px; font: inherit; background: #fff; }
+  input[type=range] { width: 100%; }
+  .ac { position: relative; }
+  .ac ul { position: absolute; z-index: 10; left: 0; right: 0; top: calc(100% + 4px); margin: 0; padding: 4px 0; list-style: none; background: #fff; border: 1px solid var(--line); border-radius: 6px; box-shadow: 0 6px 20px rgba(0,0,0,.12); max-height: 320px; overflow-y: auto; }
+  .ac ul:empty { display: none; }
+  .ac li { padding: 7px 10px; cursor: pointer; }
+  .ac li.active, .ac li:hover { background: #eef2f6; }
+  .ac li .main { font-weight: 600; }
+  .ac li .meta { font-size: 12px; color: var(--muted); }
+  .ac li.note { cursor: default; color: var(--muted); font-size: 12.5px; }
+  .ac li.note:hover { background: none; }
+  .row { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+  .colors { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+  .colors input[type=color] { width: 100%; height: 34px; border: 1px solid var(--line); border-radius: 6px; padding: 2px; background: #fff; }
+  .presets { display: flex; gap: 6px; flex-wrap: wrap; }
+  .presets button { width: 30px; height: 30px; border-radius: 50%; border: 1px solid var(--line); cursor: pointer; padding: 0; }
+  .checks { display: grid; grid-template-columns: 1fr 1fr; gap: 4px 10px; font-size: 13px; }
+  .checks label { font-weight: 400; display: flex; gap: 6px; align-items: center; margin: 0; }
+  button.primary { background: var(--accent); color: #fff; border: 0; padding: 11px; border-radius: 6px; font: inherit; font-weight: 600; cursor: pointer; }
+  button.primary:disabled { opacity: .5; cursor: progress; }
+  button.secondary { background: #fff; color: var(--accent); border: 1px solid var(--accent); padding: 9px; border-radius: 6px; font: inherit; font-weight: 600; cursor: pointer; }
+  button.secondary:disabled { opacity: .4; cursor: not-allowed; }
+  .exports { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+  #status { font-size: 12.5px; color: var(--muted); min-height: 18px; }
+  #status.err { color: #b42318; }
+  main { display: flex; align-items: center; justify-content: center; padding: 32px; }
+  #stage { max-width: 100%; max-height: calc(100vh - 64px); box-shadow: 0 2px 20px rgba(0,0,0,.08); background: #fff; }
+  #stage svg { display: block; width: 100%; height: auto; max-height: calc(100vh - 64px); }
+  .empty { color: var(--muted); text-align: center; padding: 120px 60px; }
+  .credit { font-size: 11px; color: var(--muted); margin-top: auto; }
+  @media (max-width: 800px) {
+    .app { grid-template-columns: 1fr; }
+    aside { position: static; max-height: none; border-right: 0; border-bottom: 1px solid var(--line); }
+    main { padding: 16px; }
+  }
+</style>
+</head>
+<body>
+<div class="app">
+  <aside>
+    <div>
+      <h1>City Map Generator</h1>
+      <div class="sub">Street maps of any US city, drawn from OpenStreetMap</div>
+    </div>
+
+    <div id="fileWarn" hidden style="background:#fef3f2;border:1px solid #fecdca;color:#912018;border-radius:6px;padding:10px 12px;font-size:13px">
+      <b>Maps can't load when this file is opened directly.</b> Use the online version at
+      <a href="https://fsmarketing123.github.io/city-map-generator/">fsmarketing123.github.io/city-map-generator</a>,
+      or double-click <b>Open City Map Generator.command</b> in this folder.
+    </div>
+
+    <div>
+      <label for="place">City, address or landmark <span class="hint">(or "lat, lon")</span></label>
+      <div class="ac">
+        <input id="place" type="text" value="Downtown Tampa, FL" placeholder="e.g. Nashville, TN" autocomplete="off"
+               role="combobox" aria-autocomplete="list" aria-controls="suggest" aria-expanded="false">
+        <ul id="suggest" role="listbox"></ul>
+      </div>
+    </div>
+
+    <div class="row">
+      <div>
+        <label for="width">Width (miles)</label>
+        <input id="width" type="number" value="5" min="0.25" max="25" step="0.25">
+      </div>
+      <div>
+        <label for="ratio">Shape</label>
+        <select id="ratio">
+          <option value="1.3333" selected>4:3 landscape</option>
+          <option value="1.5">3:2 landscape</option>
+          <option value="1.7778">16:9 wide</option>
+          <option value="1">Square</option>
+          <option value="0.7727">Letter portrait</option>
+          <option value="1.2941">Letter landscape</option>
+          <option value="0.75">3:4 portrait</option>
+        </select>
+      </div>
+    </div>
+
+    <div>
+      <label>Road types</label>
+      <div class="checks">
+        <label><input type="checkbox" data-cls="motorway" checked> Highways</label>
+        <label><input type="checkbox" data-cls="primary" checked> Major roads</label>
+        <label><input type="checkbox" data-cls="minor" checked> Local streets</label>
+        <label><input type="checkbox" data-cls="service" checked> Service / alleys</label>
+        <label><input type="checkbox" data-cls="path"> Footpaths</label>
+        <label><input type="checkbox" data-cls="rail"> Railways</label>
+      </div>
+    </div>
+
+    <button class="primary" id="go">Generate map</button>
+    <div id="status"></div>
+
+    <div>
+      <label>Colors</label>
+      <div class="presets" id="presets"></div>
+      <div class="colors" style="margin-top:8px">
+        <div><label for="ink" class="hint">Streets</label><input id="ink" type="color" value="#0f3550"></div>
+        <div><label for="bgc" class="hint">Background</label><input id="bgc" type="color" value="#ffffff"></div>
+      </div>
+      <label style="margin-top:8px;font-weight:400"><input type="checkbox" id="transparent"> Transparent background (PNG/SVG)</label>
+    </div>
+
+    <div>
+      <label for="weight">Line weight <span class="hint" id="weightVal">1.0×</span></label>
+      <input id="weight" type="range" min="0.4" max="2.5" step="0.1" value="1">
+    </div>
+    <div>
+      <label for="hwy">Highway emphasis <span class="hint" id="hwyVal">1.0×</span></label>
+      <input id="hwy" type="range" min="0.5" max="2.5" step="0.1" value="1">
+    </div>
+
+    <div>
+      <label>Export</label>
+      <div class="exports">
+        <button class="secondary" id="svgBtn" disabled>SVG (vector)</button>
+        <button class="secondary" id="pngBtn" disabled>PNG (high-res)</button>
+      </div>
+      <div style="margin-top:8px">
+        <label for="pngw" class="hint">PNG width (px)</label>
+        <select id="pngw">
+          <option value="2400">2400</option>
+          <option value="4800" selected>4800</option>
+          <option value="7200">7200 (print)</option>
+        </select>
+      </div>
+    </div>
+
+    <div class="credit">Map data © OpenStreetMap contributors (ODbL). Credit it if you publish.</div>
+  </aside>
+
+  <main>
+    <div id="stage"><div class="empty">Enter a place and click <b>Generate map</b>.</div></div>
+  </main>
+</div>
+
+<script>
+const OVERPASS = [
+  "https://overpass-api.de/api/interpreter",
+  "https://overpass.kumi.systems/api/interpreter",
+  "https://maps.mail.ru/osm/tools/overpass/api/interpreter",
+];
+const VIEW_W = 1600;          // SVG units across; stroke widths are relative to this
+const M_PER_MILE = 1609.344;
+
+// Road classes: which OSM tags fall in each, plus their stroke width (at VIEW_W) and draw order.
+const CLASSES = {
+  path:     { tags: ["footway","path","cycleway","pedestrian","steps","track"], w: 0.6, z: 0 },
+  service:  { tags: ["service","living_street"], w: 1.0, z: 1 },
+  minor:    { tags: ["residential","unclassified","road"], w: 1.6, z: 2 },
+  primary:  { tags: ["tertiary","tertiary_link","secondary","secondary_link","primary","primary_link"], w: 2.0, z: 3 },
+  rail:     { tags: [], w: 1.2, z: 4 },
+  link:     { tags: ["motorway_link","trunk_link"], w: 2.6, z: 5, hwy: true },
+  motorway: { tags: ["motorway","trunk"], w: 5.5, z: 6, hwy: true },
+};
+// Highways toggle covers the ramps too
+const TOGGLE_OF = { link: "motorway" };
+
+const PRESETS = [
+  ["#0f3550", "#ffffff"], ["#111111", "#ffffff"], ["#2b2b2b", "#f3eee3"],
+  ["#ffffff", "#0f3550"], ["#e9e4d8", "#1a1a1a"], ["#1f5f4a", "#ffffff"], ["#8a2b1f", "#faf6ee"],
+];
+
+const $ = id => document.getElementById(id);
+let data = null;
+if (location.protocol === "file:") $("fileWarn").hidden = false;   // { ways: [{cls, pts:[[x,y],...]}], W, H, name }
+
+// ---------- UI wiring ----------
+for (const [ink, bg] of PRESETS) {
+  const b = document.createElement("button");
+  b.style.background = `linear-gradient(135deg, ${bg} 50%, ${ink} 50%)`;
+  b.title = `${ink} on ${bg}`;
+  b.onclick = () => { $("ink").value = ink; $("bgc").value = bg; render(); };
+  $("presets").appendChild(b);
+}
+["ink","bgc","transparent"].forEach(id => $(id).addEventListener("input", render));
+document.querySelectorAll("[data-cls]").forEach(c => c.addEventListener("change", () => {
+  // Footpaths/rail aren't fetched by default; refetch if newly enabled and missing
+  if (data && c.checked && !data.fetched.has(c.dataset.cls)) generate(); else render();
+}));
+$("weight").addEventListener("input", () => { $("weightVal").textContent = (+$("weight").value).toFixed(1) + "×"; render(); });
+$("hwy").addEventListener("input", () => { $("hwyVal").textContent = (+$("hwy").value).toFixed(1) + "×"; render(); });
+$("go").onclick = generate;
+
+// ---------- Place autocomplete (Photon, OSM-based, built for search-as-you-type) ----------
+let picked = null;        // { text, lat, lon, name } from the dropdown
+let suggestions = [], activeIdx = -1, acTimer = null, acSeq = 0;
+const US_BBOX = "-171,18,-66,72";
+
+function suggestLabel(p) {
+  const street = [p.housenumber, p.street].filter(Boolean).join(" ");
+  let main = p.name || street || p.city || p.county || p.state;
+  if (p.type === "county" && !/county|parish|borough/i.test(main)) main += " County";
+  const parts = [];
+  if (p.name && street) parts.push(street);
+  for (const k of ["city", "county", "state"]) if (p[k] && p[k] !== main && !parts.includes(p[k])) parts.push(p[k]);
+  if (p.postcode && p.type === "house") parts.push(p.postcode);
+  return { main, meta: parts.slice(0, 3).join(", ") };
+}
+
+function showSuggestions(list, note) {
+  const ul = $("suggest");
+  ul.innerHTML = "";
+  activeIdx = -1;
+  suggestions = list;
+  list.forEach((s, i) => {
+    const li = document.createElement("li");
+    li.setAttribute("role", "option");
+    li.innerHTML = `<div class="main"></div><div class="meta"></div>`;
+    li.querySelector(".main").textContent = s.main;
+    li.querySelector(".meta").textContent = s.meta;
+    li.addEventListener("mousedown", e => { e.preventDefault(); choose(i); });
+    ul.appendChild(li);
+  });
+  if (note) { const li = document.createElement("li"); li.className = "note"; li.textContent = note; ul.appendChild(li); }
+  $("place").setAttribute("aria-expanded", ul.children.length ? "true" : "false");
+}
+
+function highlight(i) {
+  const items = $("suggest").querySelectorAll("li[role=option]");
+  items.forEach((li, j) => li.classList.toggle("active", j === i));
+  if (items[i]) items[i].scrollIntoView({ block: "nearest" });
+  activeIdx = i;
+}
+
+function choose(i) {
+  const s = suggestions[i];
+  if (!s) return;
+  const text = s.meta ? `${s.main}, ${s.meta}` : s.main;
+  $("place").value = text;
+  picked = { text, lat: s.lat, lon: s.lon, name: s.main };
+  showSuggestions([]);
+}
+
+async function fetchSuggestions(q) {
+  const seq = ++acSeq;
+  try {
+    const r = await fetch(`https://photon.komoot.io/api/?limit=10&lang=en&bbox=${US_BBOX}&q=` + encodeURIComponent(q));
+    if (!r.ok) return;
+    const j = await r.json();
+    if (seq !== acSeq) return;                 // a newer keystroke already fired
+    const seen = new Set(), list = [];
+    for (const f of j.features) {
+      const p = f.properties;
+      if (p.countrycode && p.countrycode !== "US") continue;
+      const lab = suggestLabel(p);
+      const key = (lab.main + "|" + lab.meta).toLowerCase();
+      if (!lab.main || seen.has(key)) continue;
+      seen.add(key);
+      list.push({ ...lab, lon: f.geometry.coordinates[0], lat: f.geometry.coordinates[1] });
+      if (list.length === 7) break;
+    }
+    showSuggestions(list, list.length ? "" : "No matches. Check the spelling, or try adding the state.");
+  } catch { /* suggestions are a convenience; ignore network hiccups */ }
+}
+
+$("place").addEventListener("input", () => {
+  picked = null;
+  clearTimeout(acTimer);
+  const q = $("place").value.trim();
+  if (q.length < 3 || /^\s*-?\d+(\.\d+)?\s*,/.test(q)) { acSeq++; showSuggestions([]); return; }
+  acTimer = setTimeout(() => fetchSuggestions(q), 250);
+});
+$("place").addEventListener("keydown", e => {
+  const n = suggestions.length;
+  if (e.key === "ArrowDown" && n) { e.preventDefault(); highlight((activeIdx + 1) % n); }
+  else if (e.key === "ArrowUp" && n) { e.preventDefault(); highlight((activeIdx - 1 + n) % n); }
+  else if (e.key === "Escape") closeSuggestions();
+  else if (e.key === "Enter") {
+    if (activeIdx >= 0) { e.preventDefault(); choose(activeIdx); }
+    else { closeSuggestions(); generate(); }
+  }
+});
+$("place").addEventListener("blur", () => setTimeout(closeSuggestions, 100));
+// Also drop any lookup still in flight, so a late reply can't reopen the list
+function closeSuggestions() { clearTimeout(acTimer); acSeq++; showSuggestions([]); }
+$("svgBtn").onclick = exportSVG;
+$("pngBtn").onclick = exportPNG;
+
+function status(msg, err) { $("status").textContent = msg; $("status").className = err ? "err" : ""; }
+
+// ---------- Data ----------
+async function geocode(q) {
+  if (picked && picked.text === q) return picked;
+  const m = q.match(/^\s*(-?\d+(?:\.\d+)?)\s*,\s*(-?\d+(?:\.\d+)?)\s*$/);
+  if (m) return { lat: +m[1], lon: +m[2], name: q.trim() };
+  const r = await fetch(`https://photon.komoot.io/api/?limit=5&lang=en&bbox=${US_BBOX}&q=` + encodeURIComponent(q));
+  if (!r.ok) throw new Error("Place search failed (" + r.status + "). Try again in a moment.");
+  const f = (await r.json()).features.find(f => !f.properties.countrycode || f.properties.countrycode === "US");
+  if (!f) throw new Error(`Couldn't find "${q}" in the US. Check the spelling or pick from the suggestions.`);
+  return { lon: f.geometry.coordinates[0], lat: f.geometry.coordinates[1], name: suggestLabel(f.properties).main };
+}
+
+async function overpass(query, onWait) {
+  // The main server is the most reliable, so retry it after a pause before trying the mirrors.
+  const attempts = [[OVERPASS[0], 0], [OVERPASS[0], 5], ...OVERPASS.slice(1).map(ep => [ep, 0]), [OVERPASS[0], 15]];
+  for (let i = 0; i < attempts.length; i++) {
+    const [ep, pause] = attempts[i];
+    for (let s = pause; s > 0; s--) { onWait(`Map server is busy. Retrying in ${s}s…`); await new Promise(r => setTimeout(r, 1000)); }
+    if (i > 0) onWait(`Map server is busy. Trying again (${i + 1} of ${attempts.length})…`);
+    try {
+      const r = await fetch(ep, { method: "POST", body: "data=" + encodeURIComponent(query),
+        headers: { "Content-Type": "application/x-www-form-urlencoded" }, signal: AbortSignal.timeout(90000) });
+      if (r.ok) return await r.json();
+    } catch { /* timeout or network error: fall through to the next attempt */ }
+  }
+  throw new Error("The free map servers are busy right now. Wait a minute and click Generate again, or try a smaller width.");
+}
+
+function enabled() {
+  const set = new Set();
+  document.querySelectorAll("[data-cls]").forEach(c => { if (c.checked) set.add(c.dataset.cls); });
+  return set;
+}
+
+async function generate() {
+  const q = $("place").value.trim();
+  if (!q) return;
+  const widthMi = Math.min(25, Math.max(0.25, +$("width").value || 5));
+  const ratio = +$("ratio").value;
+  $("go").disabled = true;
+  try {
+    status("Finding " + q + "…");
+    const c = await geocode(q);
+
+    const wM = widthMi * M_PER_MILE, hM = wM / ratio;
+    const mLat = 111320, mLon = 111320 * Math.cos(c.lat * Math.PI / 180);
+    const dLat = hM / 2 / mLat, dLon = wM / 2 / mLon;
+    const s = c.lat - dLat, n = c.lat + dLat, w = c.lon - dLon, e = c.lon + dLon;
+
+    const on = enabled();
+    // Always fetch core roads; fetch service/footpaths only when wanted (they're heavy)
+    const fetched = new Set(["motorway","primary","minor","link"]);
+    if (on.has("service")) fetched.add("service");
+    if (on.has("path")) fetched.add("path");
+    const wantTags = [...fetched].flatMap(k => CLASSES[k].tags);
+    const bbox = `${s},${w},${n},${e}`;
+    let qstr = `[out:json][timeout:120];(way["highway"~"^(${wantTags.join("|")})$"](${bbox});`;
+    if (on.has("rail")) { qstr += `way["railway"~"^(rail|light_rail|subway|tram)$"]["tunnel"!="yes"](${bbox});`; fetched.add("rail"); }
+    qstr += `);out geom qt;`;
+
+    status(`Downloading streets for ${widthMi} mi × ${(widthMi/ratio).toFixed(1)} mi… (bigger areas take longer)`);
+    const j = await overpass(qstr, msg => status(msg));
+
+    const tagToCls = {};
+    for (const [k, v] of Object.entries(CLASSES)) v.tags.forEach(t => tagToCls[t] = k);
+    const W = VIEW_W, H = Math.round(VIEW_W / ratio);
+    const sc = W / wM;
+    const ways = [];
+    for (const el of j.elements) {
+      if (el.type !== "way" || !el.geometry) continue;
+      const cls = el.tags.railway ? "rail" : tagToCls[el.tags.highway];
+      if (!cls) continue;
+      const pts = el.geometry.map(p => [
+        +(((p.lon - c.lon) * mLon * sc + W / 2)).toFixed(1),
+        +((H / 2 - (p.lat - c.lat) * mLat * sc)).toFixed(1),
+      ]);
+      ways.push({ cls, pts });
+    }
+    if (!ways.length) throw new Error("No streets found there — try a larger width.");
+    data = { ways, W, H, name: c.name, fetched };
+    status(`${ways.length.toLocaleString()} street segments · ${c.name}`);
+    render();
+    $("svgBtn").disabled = $("pngBtn").disabled = false;
+  } catch (err) {
+    status(err.message || String(err), true);
+  } finally {
+    $("go").disabled = false;
+  }
+}
+
+// ---------- Rendering ----------
+function buildSVG(forExport) {
+  const { ways, W, H } = data;
+  const on = enabled();
+  const ink = $("ink").value, bg = $("bgc").value;
+  const wt = +$("weight").value, hw = +$("hwy").value;
+  const byCls = {};
+  for (const wy of ways) {
+    if (!on.has(TOGGLE_OF[wy.cls] || wy.cls)) continue;
+    (byCls[wy.cls] ||= []).push("M" + wy.pts.map(p => p[0] + " " + p[1]).join("L"));
+  }
+  const order = Object.keys(byCls).sort((a, b) => CLASSES[a].z - CLASSES[b].z);
+  let out = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ${W} ${H}" width="${W}" height="${H}">`;
+  out += `<defs><clipPath id="clip"><rect width="${W}" height="${H}"/></clipPath></defs>`;
+  if (!(forExport && $("transparent").checked)) out += `<rect width="${W}" height="${H}" fill="${bg}"/>`;
+  out += `<g clip-path="url(#clip)" fill="none" stroke="${ink}" stroke-linecap="round" stroke-linejoin="round">`;
+  for (const k of order) {
+    const def = CLASSES[k];
+    const sw = (def.w * wt * (def.hwy ? hw : 1)).toFixed(2);
+    const dash = k === "rail" ? ` stroke-dasharray="${(6*wt).toFixed(1)} ${(4*wt).toFixed(1)}"` : "";
+    out += `<path id="${k}" stroke-width="${sw}"${dash} d="${byCls[k].join("")}"/>`;
+  }
+  return out + `</g></svg>`;
+}
+
+function render() {
+  if (!data) return;
+  $("stage").innerHTML = buildSVG(false);
+}
+
+// ---------- Export ----------
+function filename(ext) {
+  return (data.name || "city-map").toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "") + "-map." + ext;
+}
+function download(blob, name) {
+  const a = document.createElement("a");
+  a.href = URL.createObjectURL(blob); a.download = name;
+  document.body.appendChild(a); a.click(); a.remove();
+  setTimeout(() => URL.revokeObjectURL(a.href), 2000);
+}
+function exportSVG() {
+  download(new Blob([buildSVG(true)], { type: "image/svg+xml" }), filename("svg"));
+}
+function exportPNG() {
+  const outW = +$("pngw").value, outH = Math.round(outW * data.H / data.W);
+  const svg = buildSVG(true).replace(/width="\d+" height="\d+"/, `width="${outW}" height="${outH}"`);
+  const img = new Image();
+  const url = URL.createObjectURL(new Blob([svg], { type: "image/svg+xml" }));
+  status("Rendering PNG…");
+  img.onload = () => {
+    const cv = document.createElement("canvas");
+    cv.width = outW; cv.height = outH;
+    cv.getContext("2d").drawImage(img, 0, 0, outW, outH);
+    URL.revokeObjectURL(url);
+    cv.toBlob(b => { download(b, filename("png")); status("PNG saved."); }, "image/png");
+  };
+  img.onerror = () => status("PNG render failed — try a smaller width or use SVG.", true);
+  img.src = url;
+}
+</script>
+</body>
+</html>
